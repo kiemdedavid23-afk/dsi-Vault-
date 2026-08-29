@@ -1,0 +1,35 @@
+buildscript {
+    ext {
+        buildToolsVersion = "35.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 35
+        targetSdkVersion = 34
+        ndkVersion = "26.1.10909125"
+        kotlinVersion = "1.9.25"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"
+
+/*
+ * DÉCISION ASSUMÉE (à revalider) : Nouvelle Architecture React Native (Fabric/TurboModules)
+ * DÉSACTIVÉE ici (voir gradle.properties), contrairement au projet de référence fourni
+ * (OfflineApp) qui l'a activée par défaut.
+ *
+ * Raison : DSI Vault dépend de plusieurs modules natifs (react-native-track-player,
+ * react-native-video, react-native-pdf, react-native-sqlite-storage,
+ * @react-native-ml-kit/text-recognition) dont la compatibilité complète avec la
+ * Nouvelle Architecture n'a pas été vérifiée ici (pas d'accès réseau/npm dans cet
+ * environnement pour contrôler les versions publiées). Désactiver la Nouvelle
+ * Architecture réduit le risque de blocage à l'installation réelle. À réévaluer une
+ * fois les versions exactes des dépendances confirmées.
+ */
