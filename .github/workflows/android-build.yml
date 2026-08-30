@@ -20,7 +20,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # Pas de cache npm ici volontairement : il exige un package-lock.json /
+          # yarn.lock, qui n'a pas pu être généré dans l'environnement de conception
+          # (pas d'accès réseau pour exécuter npm install). Sans lockfile, "npm ci"
+          # échoue aussi — on utilise "npm install" ci-dessous.
 
       - name: Setup Java (JDK 17)
         uses: actions/setup-java@v4
@@ -32,7 +35,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm install --legacy-peer-deps
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
