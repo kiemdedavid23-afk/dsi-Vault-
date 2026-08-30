@@ -40,19 +40,19 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      - name: Build Debug APK
+      - name: Build Release APK
         run: |
           cd android
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=512m"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DSIVault-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: DSIVault-release
+          path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30
 
-      - name: List APK files (debug)
+      - name: List APK files (release)
         run: find android/app/build/outputs -name "*.apk" -type f
