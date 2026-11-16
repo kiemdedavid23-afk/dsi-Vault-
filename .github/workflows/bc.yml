@@ -1,0 +1,140 @@
+name: Ajouter 3 vidéos et 3 audios au Worker Contenu
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_url:
+        description: "Lien du Worker Contenu (ex. https://mon-worker.workers.dev)"
+        required: true
+      drive_video_id:
+        description: "ID du fichier Drive (vidéo) — laisse vide pour l'ignorer"
+        required: false
+        default: ""
+      drive_audio_id:
+        description: "ID du fichier Drive (audio) — laisse vide pour l'ignorer"
+        required: false
+        default: ""
+
+jobs:
+  ajouter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Envoyer les contenus au Worker
+        env:
+          WORKER_URL: ${{ inputs.worker_url }}
+          DRIVE_VIDEO_ID: ${{ inputs.drive_video_id }}
+          DRIVE_AUDIO_ID: ${{ inputs.drive_audio_id }}
+          HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+          SERVICE_ID: admin
+        run: |
+          node --input-type=module - <<'EOF'
+          import crypto from "node:crypto";
+
+          const BASE = process.env.WORKER_URL.replace(/\/+$/, "");
+          const SERVICE_ID = process.env.SERVICE_ID;
+          const SECRET = process.env.HMAC_SECRET;
+          if (!SECRET) { console.error("Secret HMAC_SECRET absent (Settings > Secrets and variables > Actions)."); process.exit(1); }
+
+          const ITEMS = [
+            { type: "video", slug: "test-popeye-for-president", title: "Popeye for President (1956)", language: "en", provider: "internet_archive", ia: "Popeye_forPresident", format: "mp4" },
+            { type: "video", slug: "test-video-drive", title: "Test vidéo Drive", language: "fr", provider: "google_drive", ref: process.env.DRIVE_VIDEO_ID, format: "mp4" },
+            { type: "video", slug: "test-big-buck-bunny", title: "Big Buck Bunny", language: "en", provider: "youtube", ref: "aqz-KE-bpKQ", format: "youtube_url" },
+            { type: "audio", slug: "test-librivox-short-stories-001", title: "LibriVox Short Story Collection 001", language: "en", provider: "internet_archive", ia: "stories_001_librivox", format: "mp3" },
+            { type: "audio", slug: "test-librivox-10th-anniversary", title: "LibriVox 10th Anniversary Collection", language: "en", provider: "internet_archive", ia: "10thanniversarycollection_1508_librivox", format: "mp3" },
+            { type: "audio", slug: "test-audio-drive", title: "Test audio Drive", language: "fr", provider: "google_drive", ref: process.env.DRIVE_AUDIO_ID, format: "mp3" }
+          ];
+
+          const MIME = { mp4: "video/mp4", mp3: "audio/mpeg" };
+          const PRIORITE = { google_drive: 100, youtube: 100, internet_archive: 80 };
+          const categories = {};
+          let echecs = 0;
+
+          async function appeler(methode, chemin, corps) {
+            const texte = corps === undefined ? "" : JSON.stringify(corps);
+            const ts = String(Math.floor(Date.now() / 1000));
+            const nonce = crypto.randomBytes(16).toString("hex");
+            const sig = crypto.createHmac("sha256", SECRET).update(`${SERVICE_ID}.${ts}.${nonce}.${texte}`).digest("hex");
+            const r = await fetch(BASE + chemin, {
+              method: methode.toUpperCase(),
+              headers: { "Content-Type": "application/json", "X-Service-Id": SERVICE_ID, "X-Timestamp": ts, "X-Nonce": nonce, "X-Signature": sig },
+              body: corps === undefined ? undefined : texte
+            });
+            let data = null;
+            try { data = await r.json(); } catch {}
+            return { code: r.status, data };
+          }
+
+          async function categorie(type) {
+            if (type in categories) return categories[type];
+            const r = await appeler("post", "/categories", {
+              name: type === "video" ? "Test vidéos" : "Test audios",
+              slug: type === "video" ? "test-videos" : "test-audios",
+              type
+            });
+            categories[type] = r.code === 201 && r.data?.id ? r.data.id : null;
+            if (!categories[type]) console.log(`Catégorie ${type} non créée (code ${r.code}) : contenus créés sans catégorie.`);
+            return categories[type];
+          }
+
+          async function resoudreIA(identifiant, format) {
+            const meta = await (await fetch("https://archive.org/metadata/" + identifiant)).json();
+            if (String(meta.metadata?.["access-restricted-item"]) === "true") throw new Error("item en accès restreint");
+            const f = (meta.files || []).find(x => x.name.toLowerCase().endsWith("." + format));
+            if (!f) throw new Error(`aucun fichier .${format} dans ${identifiant}`);
+            return `${identifiant}/${f.name}`;
+          }
+
+          function miniature(it) {
+            if (it.provider === "internet_archive") return "https://archive.org/services/img/" + it.ia;
+            if (it.provider === "youtube") return `https://img.youtube.com/vi/${it.ref}/hqdefault.jpg`;
+            return `https://drive.google.com/thumbnail?id=${it.ref}&sz=w400`;
+          }
+
+          for (const it of ITEMS) {
+            try {
+              const ref = it.ia ? await resoudreIA(it.ia, it.format) : it.ref;
+              if (!ref) { console.log(`IGNORÉ (ID Drive non renseigné) : ${it.title}`); continue; }
+
+              const c = await appeler("post", "/content", {
+                type: it.type, slug: it.slug, title: it.title, description: "Contenu de test",
+                language: it.language, category_id: (await categorie(it.type)) ?? undefined,
+                thumbnail_url: miniature(it), editorial_status: "published",
+                metadata: { test: true }, import_source: "workflow_test", import_ref: `${it.provider}:${ref}`
+              });
+
+              let id = c.data?.id;
+              if (c.code === 409) {
+                const g = await (await fetch(`${BASE}/content/by-slug/${it.type}/${it.slug}`)).json();
+                id = g.id ?? g.content?.id;
+                console.log(`Contenu déjà existant : ${it.title}`);
+              } else if (c.code !== 201) {
+                throw new Error(`contenu : code ${c.code} ${JSON.stringify(c.data)}`);
+              }
+              if (!id) throw new Error("id du contenu introuvable");
+
+              const a = await appeler("post", `/content/${id}/assets`, {
+                provider_id: it.provider, format: it.format, mime_type: MIME[it.format], reference: ref,
+                download_allowed: it.provider !== "youtube",
+                delivery_hint: it.provider === "google_drive" ? "direct_url" : undefined,
+                priority: PRIORITE[it.provider]
+              });
+              if (a.code === 201) console.log(`OK    ${it.type} / ${it.provider} : ${it.title}`);
+              else if (a.code === 409) console.log(`Asset déjà enregistré : ${it.title}`);
+              else throw new Error(`asset : code ${a.code} ${JSON.stringify(a.data)}`);
+            } catch (e) {
+              echecs++;
+              console.log(`ÉCHEC ${it.title} → ${e.message}`);
+            }
+          }
+
+          for (const t of ["video", "audio"]) {
+            const r = await fetch(`${BASE}/content?type=${t}&limit=20`);
+            let j = null; try { j = await r.json(); } catch {}
+            console.log(`${t} (${r.status}) : ${(j?.items || []).map(x => x.title).join(" | ")}`);
+          }
+          if (echecs > 0) process.exit(1);
+          EOF
